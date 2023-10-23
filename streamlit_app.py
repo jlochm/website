@@ -1,5 +1,11 @@
 import streamlit as st
 import sqlite3
+import pandas as pd
+import matplotlib.pyplot as plt
+from sklearn.ensemble import RandomForestRegressor
+import io
+import base64
+
 
 # Connect to the database
 conn = sqlite3.connect('user_data.db')
@@ -24,13 +30,15 @@ cursor.execute('''
         product_name TEXT,
         product_category TEXT,
         product_amount INT,
+        product_year INT,
+        product_month TEXT,
         FOREIGN KEY (user_id) REFERENCES users (id)
     )
 ''')
 
 # Page 1: Registration and Login
 def page1():
-    st.title("# Supply Chain Services by JLL")
+    st.title("Supply Chain Services by JLL")
 
     st.sidebar.header("Navigation")
     page = st.sidebar.radio("Navigation", ["Login", "Registrierung"])
@@ -81,7 +89,6 @@ def page2():
         st.session_state.page = "page4"  # Redirect to Page 4 for product portfolio analysis
 
 # Page 3: Product Addition
-# Page 3: Product Addition
 def page3():
     st.title("Fügen Sie ein Produkt zu Ihrem Portfolio hinzu")
 
@@ -102,13 +109,17 @@ def page3():
         new_category = selected_category
 
     product_amount = st.text_input("Produktmenge")
+    
+    product_year = st.text_input("Jahr")
+    
+    product_month = st.text_input("Monat")
 
     if st.button("Produkt hinzufügen", key="add_product_button"):  # Unique key
         try:
             # Insert product into the database and associate it with the logged-in user
             cursor.execute(
-                "INSERT INTO products (user_id, product_name, product_category, product_amount) VALUES (?, ?, ?, ?)",
-                (st.session_state.user[0], product_name, new_category, product_amount)
+                "INSERT INTO products (user_id, product_name, product_category, product_amount, product_year, product_month) VALUES (?, ?, ?, ?, ?, ?)",
+                (st.session_state.user[0], product_name, new_category, product_amount, product_year, product_month)
             )
             conn.commit()
             st.success("Produkt erfolgreich hinzugefügt!")
@@ -120,17 +131,85 @@ def page3():
         st.session_state.page = "page1"
 
     # Adding a button to re-navigate to the second page
-    if st.button("Zurück zu Menu Auswahl", key="back_to_menu_button"):
+    if st.button("Zurück zur Menüauswahl", key="back_to_menu_button"):
         st.session_state.page = "page2"
 
+        
+        
+# Function that enables to download a plot as a png
+def download_plot_as_png(plt):
+    buffer = io.BytesIO()
+    plt.savefig(buffer, format="png")
+    buffer.seek(0)
+    return buffer
 
 
-
-# Page 4: Placeholder for Product Portfolio Analysis (You can fill this later)
+# Defining the fourth page
 def page4():
     st.title("Produktportfolio analysieren")
-    st.write("This is Page 4. You can add content for product portfolio analysis here.")
 
+    # User input: Analyze by product name or category
+    analyze_by = st.radio("Analyse nach", ["Produktnamen", "Produktkategorie"])
+
+    if analyze_by == "Produktnamen":
+        # Retrieve existing product names from the database
+        cursor.execute("SELECT DISTINCT product_name FROM products")
+        existing_names = [row[0] for row in cursor.fetchall()]
+
+        # User input: Select a product name
+        selected_name = st.selectbox("Produktnamen auswählen", existing_names)
+
+        # Retrieve data for the selected product name
+        cursor.execute("SELECT product_year, product_amount FROM products WHERE user_id = ? AND product_name = ?", (st.session_state.user[0], selected_name))
+    else:  # Analyze by product category
+        # Retrieve existing product categories from the database
+        cursor.execute("SELECT DISTINCT product_category FROM products")
+        existing_categories = [row[0] for row in cursor.fetchall()]
+
+        # User input: Select a product category
+        selected_category = st.selectbox("Produktkategorie auswählen", existing_categories)
+
+        # Retrieve data for the selected product category
+        cursor.execute("SELECT product_year, SUM(product_amount) FROM products WHERE user_id = ? AND product_category = ? GROUP BY product_year", (st.session_state.user[0], selected_category))
+
+    data = cursor.fetchall()
+    df = pd.DataFrame(data, columns=["Year", "Amount"])
+
+    # Perform the statistical analysis (Random Forest Regression, for example)
+    X = df["Year"].values.reshape(-1, 1)
+    y = df["Amount"].values
+    regressor = RandomForestRegressor(n_estimators=100, random_state=0)
+    regressor.fit(X, y)
+
+    # Generate predictions for the next two years
+    future_years = [2023, 2024]
+    future_predictions = regressor.predict([[year] for year in future_years])
+
+    plt.figure(figsize=(15, 11))
+    plt.plot(df["Year"], df["Amount"], label="Actual Data")
+    plt.plot(future_years, future_predictions, label="Predicted Data")
+    plt.xlabel("Year")
+    plt.ylabel("Product Amount")
+    plt.legend()
+    plt.title("Product Portfolio Analysis")
+
+    # Display the plot in Streamlit
+    st.pyplot(plt)
+
+    # Add a download button for the plot image
+    download_buffer = download_plot_as_png(plt)
+    st.download_button(
+        label="Download Plot as png",
+        data=download_buffer,
+        file_name="product_portfolio_analysis.png",
+        key="download_png_button")
+    
+        # Adding a button to re-navigate to the second page
+    if st.button("Zurück zur Menüauswahl", key="back_to_menu_button"):
+        st.session_state.page = "page2"
+    
+    
+    
 # Main app
 def main():
     if "user" not in st.session_state:
@@ -154,3 +233,4 @@ if __name__ == "__main__":
 
 # Datenbankverbindung schließen
 conn.close()
+
